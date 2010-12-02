@@ -1,0 +1,64 @@
+#!/bin/env ruby
+
+if ARGV.length < 2
+  puts "Use this script to block traffic on a certain port based on a threashold every [interval=5] seconds."
+  puts "#{$0} port threadshold [interval]"
+  exit 1
+end
+
+port,threadshold,interval=ARGV[0..2]
+interval ||= 5
+
+require 'facter'
+ipaddress=Facter[:ipaddress].value
+
+def get_blocked_ips
+  result = {}
+  `shorewall show dynamic`.split("\n").each do |line|
+   items=line.split
+   result[items[7]] = items.first if items[7] =~ /^\d+\.\d+\.\d+\.\d+$/
+  end
+  result
+end
+
+def get_ips_to_block
+  result = {}
+  `netstat -na | grep $ipaddress:$port | awk '{ print $5 }' | awk -F: '{ print $ 1 }' | egrep -v '(^$|0\.0\.0\.0)' | sort | uniq -c`.split("\n").each do |line|
+     items=line.split
+     result[items[1]] = items.first if items[1] =~ /^\d+\.\d+\.\d+\.\d+$/
+   end
+   result
+end
+
+def get_whitelisted_ips
+  result = []
+  return result unless File.exists?('/var/lib/denyhosts/allowed-hosts')
+  File.read('/var/lib/denyhosts/allowed-hosts').split("\n").each do |line|
+    result << line if line =~ /^\d+\.\d+\.\d+\.\d+$/
+  end
+end
+
+def unblock_whitelisted_ip(ip)
+  system "shorewall allow #{ip}"
+end
+
+while true do
+  old_blocks = get_blocked_ips
+  whitelisted_ips = get_whitelisted_ips
+  printed = false
+  get_ips_to_block.each do |ip,count|
+    if old_blocks[ip].nil? && count.to_i >= threadshold.to_i && !whitelisted_ips.include?(ip)
+      system "shorewall drop #{ip}"
+      printed = true
+    end
+  end
+  old_blocks.keys.each do |ip|
+    if whitelisted_ips.include?(ip)
+      unblock_whitelisted_ip(ip)
+      printed = true
+    end
+  end
+  
+  puts "--------------------" if printed
+  sleep interval
+end
