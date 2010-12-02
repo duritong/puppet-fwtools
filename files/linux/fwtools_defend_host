@@ -1,0 +1,70 @@
+#!/bin/env ruby
+
+if ARGV.length < 1
+  puts "Use this script to tune a box under attack"
+  puts "You can set various parameters in a YAML file"
+  puts "It will backup the current configuration in /var/cache/fw_defend.yaml and try to restore from there or from the supplied file location or from its internal defaults."
+  puts "#{$0} defend|restore [FILE]"
+  exit 1
+end
+
+require 'yaml'
+command,file = ARGV[0..1]
+
+if file && !File.exists?(file)
+  puts "Error: File #{file} does not exist!"
+  exit 1
+end
+
+@default_options = {
+  'restore' => {
+    '/proc/sys/net/ipv4/tcp_fin_timeout' => '60',
+    '/proc/sys/net/ipv4/tcp_keepalive_time' => '7200',
+    '/proc/sys/net/ipv4/tcp_max_syn_backlog' => '1024',
+  },
+  'defend' => {
+    '/proc/sys/net/ipv4/tcp_fin_timeout' => '30',
+    '/proc/sys/net/ipv4/tcp_keepalive_time' => '1800',
+    '/proc/sys/net/ipv4/tcp_max_syn_backlog' => '1280',
+  }
+}
+
+def defend(file=nil)
+  backup_current_options
+  apply(get_options('defend',file)) 
+end
+
+def get_options(mode,file=nil)
+  return YAML.load(File.read(file)) if file and File.exists?(file)
+  @default_options[mode]
+end
+
+def restore(file=nil)
+  backup_current_options("/tmp/fw_defend_opts_#{Time.now.strftime("%Y%m%d%H%M%S")}.yaml")
+  apply(get_options('restore',(file.nil? ? '/var/cache/fw_defender.yaml' : file)))
+end
+
+def apply(options)
+  options.each do |key,value|
+    puts "Set #{key} to #{value}"
+    system "echo #{value} > #{key}"
+  end
+end
+
+def backup_current_options(target='/var/cache/fw_defender.yaml')
+  curr_options = {}
+  @default_options['defend'].keys.each do |key|
+    curr_options[key] = File.read(key).strip 
+  end
+  File.open(target,'w') { |f| f << curr_options.to_yaml }
+  puts "Backuped current options to: #{target}"
+end
+
+if command == 'restore'
+  restore(file)
+elsif command == 'defend'
+  defend(file)
+else
+  puts "No such command: #{command}"
+  exit 1
+end
