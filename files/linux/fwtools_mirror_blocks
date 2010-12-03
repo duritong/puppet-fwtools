@@ -43,12 +43,13 @@ while true do
   get_ips_to_block(host).each do |ip|
     if !old_blocks.include?(ip) && !whitelisted_ips.include?(ip)
       system "shorewall drop #{ip}"
+      old_blocks.delete(ip)
       printed = true
     else
       to_be_removed << ip unless old_blocks.include?(ip)
     end
   end
-  to_be_removed.each do |ip|
+  (old_blocks|to_be_removed).each do |ip|
     unblock_ip(ip)
     printed = true
   end
