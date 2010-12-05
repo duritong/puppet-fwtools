@@ -1,0 +1,183 @@
+#!/bin/env ruby
+
+
+if ARGV.length < 1
+  puts "Use this script to mirror block lists from another host. If you set an interval it will mirror the list every `interval` seconds."
+  puts "#{$0} host [interval]"
+  exit 1
+end
+
+
+require 'facter'
+
+class Host
+  def initialize(hostname,remote=false)
+    @hostname = hostname
+    extend Host::RemoteHost if remote
+    @fw = Fw.factory(kernel)
+  end
+
+  def kernel
+    @kernel ||= run_cmd("facter kernel").strip
+  end
+
+  def blocked_ips
+    @fw.parse_ips(run_cmd(@fw.get_blocked_ips_cmd))
+  end
+
+  def block_ip(ip)
+    unless whitelisted_ips.include?(ip)
+      puts "Block #{ip}"
+      run_cmd(@fw.block_ip_cmd(ip))
+    end
+  end
+
+  def unblock_ip(ip)
+    puts "Unblock #{ip}"
+    run_cmd(@fw.unblock_ip_cmd(ip))
+  end
+
+  def get_cmd(command)
+    command
+  end
+
+  def run_cmd(command)
+    `#{get_cmd(command)}`
+  end
+
+  def whitelisted_ips
+    if File.exists?('/var/lib/denyhosts/allowed-hosts')
+      @whitelisted_ips = File.read('/var/lib/denyhosts/allowed-hosts').split("\n").collect do |line|
+        line if line =~ /^\d+\.\d+\.\d+\.\d+$/
+      end.compact
+    end
+    @whitelisted_ips ||= []
+  end
+
+  def activate
+    run_cmd(@fw.activate_cmd)
+  end
+end
+
+module Host::RemoteHost
+  def get_cmd(command)
+    "ssh root@#{@hostname} \"#{command}\""
+  end
+end
+
+class Fw
+  def activate_cmd
+    "/bin/true"
+  end
+
+  def get_blocked_ips_cmd
+    raise "Implement method!"
+  end
+
+  def block_ip_cmd(ip)
+    raise "Implement method!"
+  end
+
+  def unblock_ip_cmd(ip)
+    raise "Implement method!"
+  end
+
+  def parse_ips(output)
+    output.split("\n").collect do |line|
+      (ip=analyze_line(line)) =~ /^\d+\.\d+\.\d+\.\d+$/ ? ip : nil
+    end.compact
+  end
+
+  def analyze_line(line)
+    line
+  end
+
+  def self.factory(kernel)
+    if kernel == 'OpenBSD'
+      Fw::Pf.new
+    else
+      Fw::Shorewall.new
+    end
+  end
+end
+
+class Fw::Shorewall < Fw
+
+  def block_ip_cmd(ip)
+    "shorewall drop #{ip}"
+  end
+
+  def unblock_ip_cmd(ip)
+    "shorewall allow #{ip}"
+  end
+
+  def get_blocked_ips_cmd
+    "shorewall show dynamic"
+  end
+
+  def analyze_line(line)
+    line.split[7]
+  end
+end
+
+class Fw::Pf < Fw
+  def initialize
+    @blacklist_file = '/etc/pf.iblacklist'
+  end
+
+  def get_blocked_ips_cmd
+    "cat #{@blacklist_file}"
+  end
+  def block_ip_cmd(ip)
+    "echo #{ip} >> #{@blacklist_file}" 
+  end
+  def unblock_ip_cmd(ip)
+    "sed '/#{ip}/d' #{@blacklist_file} > #{@blacklist_file}.new && mv #{@blacklist_file}.new #{@blacklist_file}"
+  end
+
+  def activate_cmd
+    "/usr/local/sbin/reload_pf_blacklist"
+  end
+end
+
+class MirrorBlockedIP
+
+  def initialize(hostname,interval=nil)
+    @remote_host = Host.new(hostname,true)
+    @localhost = Host.new('localhost')
+    if interval
+      @interval = interval.to_i
+      @interval = 5 if @interval <= 0
+    end
+  end
+
+  def mirror
+    old_blocks = @localhost.blocked_ips
+    whitelisted_ips = @localhost.whitelisted_ips
+    changed = false
+    @remote_host.blocked_ips.each do |ip|
+      unless old_blocks.include?(ip)
+        @localhost.block_ip(ip)
+        changed = true
+      else
+        old_blocks.delete(ip)
+      end
+    end
+    old_blocks.each do |ip|
+      @localhost.unblock_ip(ip)
+      changed = true
+    end
+    @localhost.activate if changed
+    puts "--------------------" if changed
+  end
+
+  def run
+    mirror
+    while !@interval.nil?
+      sleep @interval
+      mirror
+    end
+  end
+end
+
+MirrorBlockedIP.new(ARGV[0],ARGV[1]).run
