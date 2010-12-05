@@ -1,4 +1,4 @@
-define fwtools::linux(){
+define fwtools::tool(){
   file{
     "/usr/local/sbin/${name}":
       source => [ "puppet:///modules/fwtools/${kernel}/${name}",
