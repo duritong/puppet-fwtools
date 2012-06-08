@@ -1,6 +1,6 @@
 class fwtools::linux inherits fwtools::base {
-  if !$use_shorewall {
-    fail("fwtools on ${fqdn} require shorewall!")
+  if !hiera('use_shorewall',false) {
+    fail("fwtools on ${::fqdn} require shorewall!")
   }
 
   include ::shorewall
