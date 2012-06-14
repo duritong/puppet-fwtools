@@ -1,6 +1,6 @@
 class fwtools {
   case $::kernel {
-    openbsd: { include fwtools::openbsd }
+    openbsd: { include fwtools::base }
     linux: { include fwtools::linux }
   }
 }
