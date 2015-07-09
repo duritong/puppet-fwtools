@@ -60,5 +60,5 @@ while true do
   end
   
   puts "--------------------" if printed
-  sleep interval
+  sleep interval.to_i
 end
